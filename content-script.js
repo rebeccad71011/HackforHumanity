@@ -26,16 +26,16 @@ async function getBase64fromUrl(imageUrl) {
 }
 
 function imageToBase64(img, mimeType = 'image/jpeg') {
-    const canvas = document.createElement('canvas');
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(img, 0, 0);
-    const dataUrl = canvas.toDataURL(mimeType);
-    // Remove the data URL prefix to get only the base64 string.
-    const base64Data = dataUrl.replace(/^data:image\/[a-z]+;base64,/, '');
-    return base64Data;
-  }
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const dataUrl = canvas.toDataURL(mimeType);
+  // Remove the data URL prefix to get only the base64 string.
+  const base64Data = dataUrl.replace(/^data:image\/[a-z]+;base64,/, '');
+  return base64Data;
+}
 
 /**
  * Generates an alt text (description) for the given image element using the Gemini API.
@@ -56,28 +56,28 @@ async function generateAltTextForImage(imageElem) {
     return altTextCache[imageUrl];
   }
 
-  var base64data
+  let base64data;
+  try {
+    console.warn("Static image source:", imageUrl);
+    base64data = imageToBase64(imageElem);
+  } catch (error1) {
     try {
-        console.warn("Static image source:", imageUrl);
-        base64data = await imageToBase64(imageElem);
-    } catch (error1) {
-        try {
-            base64data = await getBase64fromUrl(imageUrl);
-        } catch (error2) {
-            console.error("Both image conversion methods failed:", error1, error2);
-            return "Image not supported";
-        }
+      base64data = await getBase64fromUrl(imageUrl);
+    } catch (error2) {
+      console.error("Both image conversion methods failed:", error1, error2);
+      return null;
     }
+  }
   console.log("Base64 data for the image retrieved.");
 
   const htmlText = document.body.innerText.slice(0, 1000); // limit to first 1000 characters
 
-const payload = {
-  contents: [
-    {
-      parts: [
-        {
-          text: `Describe this image in detail. Additionally, use the accompanying webpage context to enrich the description.
+  const payload = {
+    contents: [
+      {
+        parts: [
+          {
+            text: `Describe this image in detail. Additionally, use the accompanying webpage context to enrich the description.
 For example:
 - If this is an ecommerce site, provide details about the clothing item including a summary of its price, reviews, and availability.
 - If it's a restaurant page, include information about the menu, ambiance, and ratings.
@@ -86,20 +86,20 @@ For example:
 
 Please do not start with things like "Generated Alt Text:" or "Here is the description:", just give the requested output and no other text.
 `
-        },
-        {
-          text: `Additional context from the page: ${htmlText}`
-        },
-        {
-          inline_data: {
-            mime_type: "image/jpeg", // Adjust if needed.
-            data: base64data
+          },
+          {
+            text: `Additional context from the page: ${htmlText}`
+          },
+          {
+            inline_data: {
+              mime_type: "image/jpeg", // Adjust if needed.
+              data: base64data
+            }
           }
-        }
-      ]
-    }
-  ]
-};
+        ]
+      }
+    ]
+  };
 
   console.log("Payload:", payload);
 
@@ -120,7 +120,7 @@ Please do not start with things like "Generated Alt Text:" or "Here is the descr
 
   altTextCache[imageUrl] = altText;
 
-  console.log( altText);
+  console.log(altText);
   return altText;
 }
 
@@ -189,6 +189,10 @@ document.addEventListener("mousemove", (event) => {
   updateBlurOverlay(hoveredElem);
 
   if (hoveredElem && hoveredElem.tagName.toLowerCase() === "img") {
+    // if image is summary image, don't generate alt text
+    if (hoveredElem.className === "summary-image") {
+        return;
+    }
     if (currentImage !== hoveredElem) {
       if (hoverTimer) clearTimeout(hoverTimer);
       currentImage = hoveredElem;
@@ -197,6 +201,10 @@ document.addEventListener("mousemove", (event) => {
           const altText = await generateAltTextForImage(currentImage);
           if (altText) {
             currentImage.alt = altText;
+            currentImage.style.cursor = "pointer";
+            currentImage.setAttribute("tabindex", "0");
+            currentImage.addEventListener("click", () => {});
+            currentImage.addEventListener("keydown", () => {});
             console.log("Applied alt text:", altText);
           }
         } catch (error) {
@@ -227,3 +235,100 @@ window.addEventListener("mouseout", (event) => {
     }
   }
 });
+
+async function getSummaryImage() {
+    const url = browser.runtime.getURL('summaryImage.txt');
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error('Failed to load base64 data');
+    }
+    return response.text();
+  }
+
+/**
+ * Generates a page summary using the background script’s LLM API.
+ * The summary should describe the layout, main content, and interactive elements,
+ * with an emphasis on guiding blind users.
+ *
+ * @returns {Promise<string>} - The generated summary text.
+ */
+async function generatePageSummary() {
+  const pageText = document.body.innerText.slice(0, 2000); // limit to first 2000 characters
+
+  const payload = {
+    contents: [
+      {
+        parts: [
+          {
+            text: `Summarize the webpage for blind users. Describe the overall layout including headers, navigation menus, main content areas, interactive elements (such as buttons, links, forms), and any visual cues. Mention where key information and interactions are located, so that a visually impaired user can understand how to navigate and interact with the page.
+            Keep the summary concise and informative, focusing on the most important elements of the page and do not use any kind of mark down, keep it plain text.`
+          },
+          {
+            text: `Page context: ${pageText}`
+          }
+        ]
+      }
+    ]
+  };
+
+  try {
+    const response = await browser.runtime.sendMessage({
+      command: 'makeGeminiRequest',
+      url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIzaSyCaQohZfj9uwjlJP88TAk-5FmerpKpOEw4",
+      payload: payload
+    });
+
+    if (!response.success) {
+      throw new Error(`Page summary call failed: ${response.error}`);
+    }
+    const data = response.data;
+    const summary = data.candidates[0]?.content.parts[0]?.text.trim() || "";
+    return summary;
+  } catch (error) {
+    console.error("Error generating page summary:", error);
+    return "";
+  }
+}
+
+/**
+ * Inserts an empty white image at the top of the page with the alt text set to the page summary.
+ */
+async function insertSummaryImage() {
+    const summaryText = await generatePageSummary();
+    if (!summaryText) {
+        console.warn("No summary generated; skipping summary image insertion.");
+        return;
+    }
+    
+    // Create a blank white 1x1 pixel image (data URL for a white PNG)
+    const blankWhiteImageDataURL = await getSummaryImage();
+    const summaryImage = document.createElement("img");
+    summaryImage.src = blankWhiteImageDataURL;
+    summaryImage.alt = summaryText;
+    
+    // Make it appear interactive with cursor and tabindex
+    summaryImage.style.cursor = "pointer"; 
+    summaryImage.setAttribute("tabindex", "0");
+    summaryImage.className = "summary-image";
+    summaryImage.style.width = "100%";
+    summaryImage.style.height = "100px";
+    summaryImage.style.display = "block";
+    summaryImage.style.position = "relative";
+    summaryImage.style.zIndex = "999999";
+    summaryImage.style.backgroundColor = "#fff";
+    summaryImage.style.marginBottom = "10px";
+
+    // Add no-op event listeners to make it seem interactive
+    summaryImage.addEventListener("click", () => {});
+    summaryImage.addEventListener("keydown", () => {});
+
+    document.body.insertBefore(summaryImage, document.body.firstChild);
+    console.log("Inserted page summary image with alt text:", summaryText);
+}
+
+// Trigger the page summary generation and insertion when the page loads.
+if (document.readyState === "complete" || document.readyState === "interactive") {
+    insertSummaryImage();
+} else {
+    window.addEventListener("DOMContentLoaded", insertSummaryImage);
+}
