@@ -2,7 +2,13 @@ browser.runtime.onMessage.addListener(async (message, sender) => {
     if (message.command === 'captureTab') {
    
 
-        const imageResponse = await fetch(message.imageURL)
+        const imageResponse = await fetch(message.imageURL, {
+            headers: {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET',
+            'Access-Control-Allow-Headers': 'Content-Type'
+            }
+        })
         
         const blob = await imageResponse.blob();
 
